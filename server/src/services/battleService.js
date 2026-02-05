@@ -1,113 +1,90 @@
 import prisma from '../config/db.js';
 
 export const simulateBattle = async (userId) => {
-  const BATTLE_COST = 20;
+    const COST = 20;
 
-  // 1. Validate User & Load Team
-  const user = await prisma.user.findUnique({ 
-      where: { id: userId },
-      include: { characters: { include: { character: true } } } 
-  });
+    // 1. Fetch User & Team
+    const user = await prisma.user.findUnique({ 
+        where: { id: userId },
+        include: { characters: { include: { character: true } } } 
+    });
 
-  if (user.cursedEnergy < BATTLE_COST) {
-    throw new Error("NO_ENERGY");
-  }
+    // 🛡️ FIX: Guard against Zombie Tokens (User deleted but browser still has token)
+    if (!user) {
+        throw new Error("USER_NOT_FOUND");
+    }
 
-  // Select Top 3 Characters
-  const team = user.characters
-    .sort((a, b) => (b.character.baseAtk * b.level) - (a.character.baseAtk * a.level))
-    .slice(0, 3)
-    .map(c => ({
-        name: c.character.name,
-        hp: c.character.baseHp * c.level,
-        atk: c.character.baseAtk * c.level,
-    }));
+    // 2. Validations
+    if (user.cursedEnergy < COST) throw new Error("NO_ENERGY");
+    if (user.characters.length === 0) throw new Error("NO_CHARACTERS");
 
-  if (team.length === 0) throw new Error("NO_CHARACTERS");
+    // 3. Calculate Team Power
+    // We add a safety check (|| 0) just in case
+    const totalAtk = user.characters.reduce((acc, c) => acc + ((c.character.baseAtk || 10) * c.level), 0);
+    const totalHp = user.characters.reduce((acc, c) => acc + ((c.character.baseHp || 50) * c.level), 0);
 
-  // 2. Generate Enemy
-  const enemy = {
-    name: "Special Grade Spirit",
-    hp: 500 * (1 + (user.characters.length * 0.05)), // Scales slightly
-    atk: 40,
-  };
+    // 4. Simulate Turn-Based Battle
+    const enemyHp = totalHp * (0.8 + Math.random() * 0.4); 
+    const enemyAtk = totalAtk * (0.8 + Math.random() * 0.4);
+    
+    let battleLogs = [];
+    let playerHp = totalHp;
+    let currEnemyHp = enemyHp;
+    let turn = 1;
+    let result = "LOSS";
 
-  // 3. Run Simulation (Instant)
-  let logs = [];
-  let turn = 1;
-  let victory = false;
-
-  while (turn <= 20) {
-    // Player Team Attacks
-    for (const char of team) {
-        if (char.hp <= 0) continue;
-        
-        const isCrit = Math.random() < 0.15; // 15% crit
-        const damage = Math.floor(char.atk * (isCrit ? 1.5 : 1.0));
-        enemy.hp -= damage;
-
-        logs.push({
-            turn,
-            actor: char.name,
-            action: "ATTACK",
-            target: enemy.name,
-            value: damage,
-            isCrit,
-            message: `${char.name} hit ${enemy.name} for ${damage} damage!`
+    while (playerHp > 0 && currEnemyHp > 0 && turn <= 10) {
+        // Player Attacks
+        const dmgDealt = Math.floor(totalAtk * (0.9 + Math.random() * 0.2));
+        currEnemyHp -= dmgDealt;
+        battleLogs.push({ 
+            turn, 
+            actor: user.name, 
+            action: "ATTACK", 
+            message: `${user.name}'s team dealt ${dmgDealt} damage!`,
+            isCrit: dmgDealt > totalAtk 
         });
 
-        if (enemy.hp <= 0) {
-            victory = true;
+        if (currEnemyHp <= 0) {
+            result = "WIN";
             break;
         }
+
+        // Enemy Attacks
+        const dmgTaken = Math.floor(enemyAtk * (0.8 + Math.random() * 0.3));
+        playerHp -= dmgTaken;
+        battleLogs.push({ 
+            turn, 
+            actor: "Special Grade Spirit", 
+            action: "ATTACK", 
+            message: `Enemy attacked for ${dmgTaken} damage!`,
+            isCrit: false 
+        });
+
+        turn++;
     }
-    if (victory) break;
 
-    // Enemy Attacks Random Survivor
-    const survivors = team.filter(c => c.hp > 0);
-    if (survivors.length === 0) break;
+    const pointsEarned = result === "WIN" ? 100 : 10;
 
-    const target = survivors[Math.floor(Math.random() * survivors.length)];
-    const enemyDmg = enemy.atk;
-    target.hp -= enemyDmg;
+    // 5. Database Transaction
+    // This will throw if the 'BattleLog' table doesn't exist
+    await prisma.$transaction([
+        prisma.user.update({
+            where: { id: userId },
+            data: { 
+                cursedEnergy: { decrement: COST },
+                points: { increment: pointsEarned }
+            }
+        }),
+        prisma.battleLog.create({
+            data: {
+                userId,
+                enemy: "Special Grade Spirit",
+                result,
+                logs: JSON.stringify(battleLogs)
+            }
+        })
+    ]);
 
-    logs.push({
-        turn,
-        actor: enemy.name,
-        action: "ATTACK",
-        target: target.name,
-        value: enemyDmg,
-        message: `${enemy.name} attacked ${target.name} for ${enemyDmg} damage!`
-    });
-
-    if (team.every(c => c.hp <= 0)) break;
-    turn++;
-  }
-
-  // 4. Save Results
-  const result = victory ? "WIN" : "LOSS";
-  const pointsEarned = victory ? 50 : 5;
-
-  await prisma.$transaction(async (tx) => {
-    await tx.user.update({
-        where: { id: userId },
-        data: { 
-            cursedEnergy: { decrement: BATTLE_COST },
-            points: { increment: pointsEarned }
-        }
-    });
-
-    await tx.battleLog.create({
-        data: {
-            userId,
-            colonyName: "Tokyo Colony No. 1",
-            result,
-            pointsEarned,
-            enemy: enemy.name,
-            logData: JSON.stringify(logs)
-        }
-    });
-  });
-
-  return { result, logs, pointsEarned };
+    return { result, pointsEarned, logs: JSON.stringify(battleLogs) };
 };

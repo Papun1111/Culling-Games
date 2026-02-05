@@ -120,14 +120,11 @@ model SummonHistory {
 // --------------------------------------
 
 model BattleLog {
-  id          String   @id @default(uuid())
-  userId      String
-  colonyName  String   // e.g., "Tokyo No. 1 Colony"
-  result      String   // WIN / LOSS
-  pointsEarned Int
-  enemy       String   // e.g., "Cursed Spirit Grade 2"
-  logData     Json     // Stores turn-by-turn text for replay
-  createdAt   DateTime @default(now())
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  enemy     String
+  result    String
+  logs      String   // Using String to store JSON
+  createdAt DateTime @default(now())
 }
