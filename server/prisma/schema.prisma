@@ -1,0 +1,133 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+model User {
+  id            String    @id @default(uuid())
+  googleId      String    @unique
+  email         String    @unique
+  name          String?
+  image         String?
+  
+  // Game Economy
+  points        Int       @default(0) // Used for summoning
+  cursedEnergy  Int       @default(100) // Stamina for battles
+  maxEnergy     Int       @default(100)
+  
+  // The Culling Game Rules
+  isActive      Boolean   @default(true)
+  lastLoginAt   DateTime  @default(now())
+  createdAt     DateTime  @default(now())
+  
+  // Relations
+  tasks           Task[]
+  characters      UserCharacter[]
+  summonHistory   SummonHistory[]
+  battleLogs      BattleLog[]
+  inactivityLog   InactivityTracker?
+}
+
+model InactivityTracker {
+  id              String   @id @default(uuid())
+  userId          String   @unique
+  lastActiveDate  DateTime @default(now())
+  daysInactive    Int      @default(0)
+  
+  // Relation
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// --------------------------------------
+// TASK DOMAIN (Kogane Dashboard)
+// --------------------------------------
+
+model Task {
+  id          String   @id @default(uuid())
+  userId      String
+  title       String
+  description String?
+  difficulty  String   @default("GRADE_4") // GRADE_4, GRADE_3, GRADE_2, GRADE_1, SPECIAL_GRADE
+  pointsReward Int     @default(10)
+  isCompleted Boolean  @default(false)
+  completedAt DateTime?
+  createdAt   DateTime @default(now())
+  dueDate     DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// --------------------------------------
+// RPG & GACHA DOMAIN
+// --------------------------------------
+
+model Character {
+  id           String  @id @default(uuid())
+  name         String  // e.g., "Satoru Gojo"
+  rarity       String  // R, SR, SSR, UR
+  imageUrl     String?
+  description  String?
+  
+  // Base Stats
+  baseHp       Int
+  baseAtk      Int
+  baseDef      Int
+  speed        Int
+  
+  // Passive (Productivity Buffs)
+  passiveName  String? // e.g., "Six Eyes"
+  passiveEffect String? // e.g., "Tasks grant double points"
+
+  // Relations
+  instances    UserCharacter[]
+}
+
+model UserCharacter {
+  id          String @id @default(uuid())
+  userId      String
+  characterId String
+  
+  level       Int    @default(1)
+  exp         Int    @default(0)
+  duplicates  Int    @default(0) // For "Awakening" mechanics
+  
+  obtainedAt  DateTime @default(now())
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  character Character @relation(fields: [characterId], references: [id])
+}
+
+model SummonHistory {
+  id          String   @id @default(uuid())
+  userId      String
+  characterName String
+  rarity      String
+  summonedAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// --------------------------------------
+// COLONY (BATTLE) DOMAIN
+// --------------------------------------
+
+model BattleLog {
+  id          String   @id @default(uuid())
+  userId      String
+  colonyName  String   // e.g., "Tokyo No. 1 Colony"
+  result      String   // WIN / LOSS
+  pointsEarned Int
+  enemy       String   // e.g., "Cursed Spirit Grade 2"
+  logData     Json     // Stores turn-by-turn text for replay
+  createdAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
